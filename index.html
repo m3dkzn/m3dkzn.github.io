@@ -122,6 +122,32 @@
     .section-title { font-size: clamp(1.8rem, 4vw, 2.6rem); font-weight: 900; background: linear-gradient(135deg, var(--text), var(--accent)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
     
     .projects-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; margin-bottom: 64px; }
+    .projects-toolbar {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 12px;
+      margin: 0 0 24px;
+      flex-wrap: wrap;
+    }
+    .projects-toolbar label {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+    .sort-select {
+      background: rgba(15, 15, 18, 0.85);
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+      color: var(--text);
+      padding: 10px 14px;
+      font: inherit;
+      cursor: pointer;
+      min-width: 220px;
+    }
+    .sort-select:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 3px;
+    }
     .project-card { background: var(--glass); border: 1px solid var(--glass-border); border-radius: 18px; overflow: hidden; cursor: pointer; transition: transform .25s ease, border-color .25s ease; }
     .project-card:hover { transform: translateY(-6px); border-color: var(--primary); box-shadow: var(--shadow); }
     .project-image { aspect-ratio: 4 / 3; width: 100%; background: linear-gradient(135deg, #26262b, #1a1a1f); display: flex; align-items: center; justify-content: center; color: var(--primary); overflow: hidden; }
@@ -364,6 +390,8 @@
       .nav-menu.open { display: flex; }
       .nav-link { display: block; }
       .hero { padding-top: 130px; padding-bottom: 60px; }
+      .projects-toolbar { justify-content: flex-start; }
+      .sort-select { width: 100%; }
       .modal-body { grid-template-columns: 1fr; min-height: unset; }
       .modal-left { min-height: clamp(260px, 65vh, 520px); }
       .projects-grid { grid-template-columns: 1fr; }
@@ -419,6 +447,15 @@
 
     <section id="projects">
       <div class="section-header"><h2 class="section-title">МОИ ПРОЕКТЫ</h2></div>
+      <div class="projects-toolbar">
+        <label for="projectSortControl">Сортировка:</label>
+        <select id="projectSortControl" class="sort-select">
+          <option value="date_desc">По дате: сначала новые</option>
+          <option value="date_asc">По дате: сначала старые</option>
+          <option value="price_desc">По цене: сначала дорогие</option>
+          <option value="price_asc">По цене: сначала доступные</option>
+        </select>
+      </div>
       <div class="projects-grid" id="projectsGrid"></div>
     </section>
 
@@ -644,6 +681,7 @@
       currentProject: null,
       currentImageIndex: 0,
       isAdminAuthenticated: false,
+      projectSort: 'date_desc',
       editingProjectId: null,
       editingPriceId: null,
       uploadedFiles: [],
@@ -657,9 +695,9 @@
 
     // Демо-данные
     const DEFAULT_PROJECTS = [
-      { id: 1, name: 'Промышленные прототипы', description: 'Высокоточное прототипирование для промышленности с использованием технологий SLA, SLS и FDM.', images: ['https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?w=800&h=600&fit=crop'], price: 2500 },
-      { id: 2, name: 'Архитектурные макеты', description: 'Детализированные архитектурные модели зданий, районов и ландшафтных решений.', images: ['https://images.unsplash.com/photo-1503387837-b154d5074bd2?w=800&h=600&fit=crop'], price: 15000 },
-      { id: 3, name: 'Медицинские модели', description: 'Биосовместимые материалы для точных анатомических моделей, хирургических шаблонов.', images: ['https://images.unsplash.com/photo-1559757148-5c350d0d3c56?w=800&h=600&fit=crop'], price: 8000 }
+      { id: 1, name: 'Промышленные прототипы', description: 'Высокоточное прототипирование для промышленности с использованием технологий SLA, SLS и FDM.', images: ['https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?w=800&h=600&fit=crop'], price: 2500, created_at: '2024-08-15T10:00:00Z' },
+      { id: 2, name: 'Архитектурные макеты', description: 'Детализированные архитектурные модели зданий, районов и ландшафтных решений.', images: ['https://images.unsplash.com/photo-1503387837-b154d5074bd2?w=800&h=600&fit=crop'], price: 15000, created_at: '2024-06-10T09:30:00Z' },
+      { id: 3, name: 'Медицинские модели', description: 'Биосовместимые материалы для точных анатомических моделей, хирургических шаблонов.', images: ['https://images.unsplash.com/photo-1559757148-5c350d0d3c56?w=800&h=600&fit=crop'], price: 8000, created_at: '2024-05-01T14:15:00Z' }
     ];
 
     const DEFAULT_PRICE_LIST = [
@@ -715,6 +753,47 @@
         if (typeof value === 'number') return value;
         const str = String(value);
         return /^\d+$/.test(str) ? Number(str) : str;
+      },
+      projectTimestamp(project) {
+        const raw = project?.created_at || project?.createdAt || project?.date;
+        if (!raw) return NaN;
+        const parsed = Date.parse(raw);
+        return Number.isFinite(parsed) ? parsed : NaN;
+      },
+      getProjectComparator(sortKey = 'date_desc') {
+        const fallback = (a, b) => Number(a?.sort_order ?? 0) - Number(b?.sort_order ?? 0);
+        const compare = (aVal, bVal, direction) => {
+          const aValid = Number.isFinite(aVal);
+          const bValid = Number.isFinite(bVal);
+          if (aValid && bValid) {
+            const diff = direction === 'asc' ? aVal - bVal : bVal - aVal;
+            if (diff !== 0) return diff;
+            return 0;
+          }
+          if (aValid && !bValid) return -1;
+          if (!aValid && bValid) return 1;
+          return 0;
+        };
+        return (a, b) => {
+          let result = 0;
+          switch (sortKey) {
+            case 'date_asc':
+              result = compare(this.projectTimestamp(a), this.projectTimestamp(b), 'asc');
+              break;
+            case 'price_desc':
+              result = compare(Number(a?.price ?? 0), Number(b?.price ?? 0), 'desc');
+              break;
+            case 'price_asc':
+              result = compare(Number(a?.price ?? 0), Number(b?.price ?? 0), 'asc');
+              break;
+            case 'date_desc':
+            default:
+              result = compare(this.projectTimestamp(a), this.projectTimestamp(b), 'desc');
+              break;
+          }
+          if (result !== 0) return result;
+          return fallback(a, b);
+        };
       }
     };
 
@@ -801,6 +880,7 @@
         name: p.name,
         description: p.description,
         price: p.price,
+        created_at: p.created_at || new Date(Date.now() - index * 86400000).toISOString(),
         sort_order: index,
         images: (p.images || []).map((url, i) => ({
           id: `demo-${index}-${i}`,
@@ -860,7 +940,7 @@
           throw new Error("Таблицы Supabase не найдены. Выполни SQL из инструкции и повтори подключение.");
         }
 
-        const projectsResponse = await fetchSupabase(`${state.supabaseUrl}/rest/v1/projects?select=id,name,description,price,sort_order,project_images(id,url,storage_path,sort_order)&order=sort_order.asc&project_images.order=sort_order.asc`, {
+        const projectsResponse = await fetchSupabase(`${state.supabaseUrl}/rest/v1/projects?select=id,name,description,price,sort_order,created_at,project_images(id,url,storage_path,sort_order)&order=sort_order.asc&project_images.order=sort_order.asc`, {
           headers: {
             'apikey': state.supabaseKey,
             'Authorization': `Bearer ${state.supabaseKey}`,
@@ -880,6 +960,7 @@
           name: p.name,
           description: p.description,
           price: p.price,
+          created_at: p.created_at || p.createdAt || null,
           sort_order: p.sort_order ?? 0,
           images: (p.project_images || []).map(img => ({
             id: img.id,
@@ -1300,9 +1381,41 @@
 
     // UI
     const ui = {
+      initProjectSort(){
+        const control = document.getElementById('projectSortControl');
+        if (!control) return;
+        control.value = state.projectSort;
+        control.addEventListener('change', (event) => {
+          const value = event.target?.value;
+          state.projectSort = value || 'date_desc';
+          ui.loadProjects();
+        });
+      },
+      syncProjectSortControl(){
+        const control = document.getElementById('projectSortControl');
+        if (control && control.value !== state.projectSort) {
+          control.value = state.projectSort;
+        }
+      },
       loadProjects(){ 
-        const grid = document.getElementById('projectsGrid'); grid.innerHTML=''; 
-        state.projects.forEach(project=>{ 
+        const grid = document.getElementById('projectsGrid'); 
+        if (!grid) return;
+        grid.innerHTML=''; 
+        this.syncProjectSortControl();
+        const projects = [...state.projects];
+        const comparator = utils.getProjectComparator(state.projectSort);
+        if (comparator) {
+          projects.sort(comparator);
+        }
+        if (!projects.length) {
+          const placeholder = document.createElement('p');
+          placeholder.style.color = 'var(--gray)';
+          placeholder.style.textAlign = 'center';
+          placeholder.textContent = 'Проекты скоро появятся';
+          grid.appendChild(placeholder);
+          return;
+        }
+        projects.forEach(project=>{ 
           const card = document.createElement('div'); 
           card.className='project-card'; 
           card.onclick=()=>ui.openProject(project); 
@@ -1963,6 +2076,7 @@
       initNavigation();
       initDragAndDrop();
       initModalSwipe();
+      ui.initProjectSort();
       initSupabaseSettings();
       if (state.supabaseUrl && state.supabaseKey) {
         await supabaseSync.reload();
